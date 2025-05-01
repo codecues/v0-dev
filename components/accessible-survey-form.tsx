@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState, useEffect } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -21,6 +21,7 @@ import {
   ChevronRight,
   ChevronLeft,
   HelpCircle,
+  Keyboard,
 } from "lucide-react"
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
@@ -88,6 +89,12 @@ const formSteps = [
   },
 ]
 
+type KeyboardShortcut = {
+  key: string
+  description: string
+  action: () => void
+}
+
 export default function AccessibleSurveyForm() {
   const [submitted, setSubmitted] = useState(false)
   const [formData, setFormData] = useState({
@@ -109,6 +116,9 @@ export default function AccessibleSurveyForm() {
   const [guidedMode, setGuidedMode] = useState(false)
   const [currentStep, setCurrentStep] = useState(0)
   const [isReadingInstructions, setIsReadingInstructions] = useState(false)
+
+  const [keyboardShortcutsModalOpen, setKeyboardShortcutsModalOpen] = useState(false)
+  const formRef = useRef<HTMLDivElement>(null)
 
   // Speech recognition
   const { isListening, transcript, startListening, stopListening, hasRecognitionSupport } = useSpeechRecognition()
@@ -593,6 +603,97 @@ export default function AccessibleSurveyForm() {
     }
   }
 
+  const handleKeyboardShortcuts = (e: KeyboardEvent) => {
+    // Only process shortcuts if guided mode is active
+    if (!guidedMode) return
+
+    // Don't process shortcuts if user is typing in an input field
+    const activeElement = document.activeElement
+    const isInputActive =
+      activeElement instanceof HTMLInputElement ||
+      activeElement instanceof HTMLTextAreaElement ||
+      activeElement instanceof HTMLSelectElement
+
+    // Allow Escape key to work even when in input fields
+    if (e.key === "Escape" && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+      if (keyboardShortcutsModalOpen) {
+        setKeyboardShortcutsModalOpen(false)
+        e.preventDefault()
+        return
+      }
+    }
+
+    // Don't process other shortcuts if user is typing in an input
+    if (isInputActive && e.key !== "?") return
+
+    // Process keyboard shortcuts
+    switch (e.key) {
+      case "ArrowRight":
+      case "n":
+        if (!e.ctrlKey && !e.altKey && !e.shiftKey) {
+          handleNextStep()
+          e.preventDefault()
+        }
+        break
+      case "ArrowLeft":
+      case "p":
+        if (!e.ctrlKey && !e.altKey && !e.shiftKey) {
+          handlePreviousStep()
+          e.preventDefault()
+        }
+        break
+      case "r":
+        if (!e.ctrlKey && !e.altKey && !e.shiftKey) {
+          readCurrentStepInstructions()
+          e.preventDefault()
+        }
+        break
+      case "g":
+        if (!e.ctrlKey && !e.altKey && !e.shiftKey) {
+          toggleGuidedMode()
+          e.preventDefault()
+        }
+        break
+      case "s":
+        if (!e.ctrlKey && !e.altKey && !e.shiftKey && currentStep === formSteps.length - 1) {
+          handleSubmit(new Event("submit") as any)
+          e.preventDefault()
+        }
+        break
+      case "?":
+        if (!e.ctrlKey && !e.altKey && !e.shiftKey) {
+          setKeyboardShortcutsModalOpen(true)
+          e.preventDefault()
+        }
+        break
+      case "1":
+      case "2":
+      case "3":
+      case "4":
+      case "5":
+      case "6":
+      case "7":
+      case "8":
+        if (e.altKey && !e.ctrlKey && !e.shiftKey) {
+          const stepIndex = Number.parseInt(e.key) - 1
+          if (stepIndex >= 0 && stepIndex < formSteps.length) {
+            setCurrentStep(stepIndex)
+            const step = formSteps[stepIndex]
+            if (step.field) {
+              const element = document.getElementById(step.field)
+              if (element) {
+                element.focus()
+                setActiveField(step.field)
+              }
+            }
+            setTimeout(() => readCurrentStepInstructions(), 500)
+            e.preventDefault()
+          }
+        }
+        break
+    }
+  }
+
   const goToStep = (fieldName: string) => {
     const stepIndex = formSteps.findIndex((step) => step.field === fieldName)
     if (stepIndex !== -1) {
@@ -623,6 +724,70 @@ export default function AccessibleSurveyForm() {
   const getInputContrastClass = () => {
     if (!highContrast) return ""
     return "bg-black text-white border-yellow-400 placeholder-gray-400"
+  }
+
+  useEffect(() => {
+    // Add keyboard event listener
+    window.addEventListener("keydown", handleKeyboardShortcuts)
+
+    // Clean up
+    return () => {
+      window.removeEventListener("keydown", handleKeyboardShortcuts)
+    }
+  }, [guidedMode, currentStep, speaking, keyboardShortcutsModalOpen])
+
+  const getKeyboardShortcuts = (): KeyboardShortcut[] => {
+    return [
+      {
+        key: "→ or N",
+        description: "Move to next step",
+        action: handleNextStep,
+      },
+      {
+        key: "← or P",
+        description: "Move to previous step",
+        action: handlePreviousStep,
+      },
+      {
+        key: "R",
+        description: "Repeat current instructions",
+        action: readCurrentStepInstructions,
+      },
+      {
+        key: "G",
+        description: "Toggle guided mode",
+        action: toggleGuidedMode,
+      },
+      {
+        key: "S",
+        description: "Submit form (on last step)",
+        action: () => {
+          if (currentStep === formSteps.length - 1) {
+            handleSubmit(new Event("submit") as any)
+          }
+        },
+      },
+      {
+        key: "Alt + 1-8",
+        description: "Jump to specific step",
+        action: () => {
+          announceToScreenReader("Press Alt plus a number from 1 to 8 to jump to that step")
+        },
+      },
+      {
+        key: "?",
+        description: "Show keyboard shortcuts",
+        action: () => setKeyboardShortcutsModalOpen(true),
+      },
+      {
+        key: "Esc",
+        description: "Close dialogs",
+        action: () => {
+          setKeyboardShortcutsModalOpen(false)
+          setHelpModalOpen(false)
+        },
+      },
+    ]
   }
 
   // Voice command help modal
@@ -684,10 +849,69 @@ export default function AccessibleSurveyForm() {
               <li style={formStyle}>"Exit guided mode" - Exit the guided mode</li>
             </ul>
           </div>
+          <div>
+            <h3 className="text-xl font-semibold mb-2" style={formStyle}>
+              Keyboard Shortcuts
+            </h3>
+            <ul className="list-disc pl-5 space-y-1">
+              <li style={formStyle}>"→" or "N" - Move to next step</li>
+              <li style={formStyle}>"←" or "P" - Move to previous step</li>
+              <li style={formStyle}>"R" - Repeat current instructions</li>
+              <li style={formStyle}>"G" - Toggle guided mode</li>
+              <li style={formStyle}>"S" - Submit form (on last step)</li>
+              <li style={formStyle}>"Alt + 1-8" - Jump to specific step</li>
+              <li style={formStyle}>"?" - Show keyboard shortcuts</li>
+              <li style={formStyle}>"Esc" - Close dialogs</li>
+            </ul>
+          </div>
         </div>
         <div className="mt-6 flex justify-end">
           <Button
             onClick={() => setHelpModalOpen(false)}
+            className={highContrast ? "bg-yellow-500 text-black hover:bg-yellow-600" : ""}
+            style={formStyle}
+          >
+            Close
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+
+  const KeyboardShortcutsHelp = () => (
+    <div
+      className={`fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 ${keyboardShortcutsModalOpen ? "" : "hidden"}`}
+    >
+      <div
+        className={`bg-white p-6 rounded-lg max-w-2xl max-h-[80vh] overflow-y-auto ${highContrast ? "bg-black text-white border-2 border-yellow-400" : ""}`}
+      >
+        <h2 className="text-2xl font-bold mb-4 flex items-center" style={formStyle}>
+          <Keyboard className="mr-2 h-6 w-6" /> Keyboard Shortcuts
+        </h2>
+        <div className="space-y-4">
+          <p className="text-lg" style={formStyle}>
+            The following keyboard shortcuts are available in guided mode:
+          </p>
+          <div className="grid grid-cols-2 gap-4">
+            {getKeyboardShortcuts().map((shortcut, index) => (
+              <div key={index} className="flex items-start space-x-2">
+                <kbd
+                  className={`px-2 py-1 text-sm font-semibold rounded ${
+                    highContrast
+                      ? "bg-gray-800 text-yellow-400 border border-yellow-400"
+                      : "bg-gray-100 text-gray-800 border border-gray-300"
+                  }`}
+                >
+                  {shortcut.key}
+                </kbd>
+                <span style={formStyle}>{shortcut.description}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="mt-6 flex justify-end">
+          <Button
+            onClick={() => setKeyboardShortcutsModalOpen(false)}
             className={highContrast ? "bg-yellow-500 text-black hover:bg-yellow-600" : ""}
             style={formStyle}
           >
@@ -747,9 +971,10 @@ export default function AccessibleSurveyForm() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" ref={formRef}>
       {/* Voice Command Help Modal */}
       <VoiceCommandHelp />
+      <KeyboardShortcutsHelp />
 
       {/* Accessibility Controls */}
       <Card className={`w-full max-w-3xl mx-auto border-2 ${getContrastClass()}`}>
@@ -818,6 +1043,7 @@ export default function AccessibleSurveyForm() {
           <div className="flex items-center space-x-4">
             <Label htmlFor="guided-mode" className="text-xl font-bold cursor-pointer" style={formStyle}>
               <Headphones className="inline mr-2" /> Guided Mode
+              <span className={`ml-2 text-sm ${highContrast ? "text-gray-300" : "text-gray-500"}`}>(Press G)</span>
             </Label>
             <Switch id="guided-mode" checked={guidedMode} onCheckedChange={() => toggleGuidedMode()} />
           </div>
@@ -974,6 +1200,15 @@ export default function AccessibleSurveyForm() {
             className={`mt-2 p-4 rounded-md ${highContrast ? "bg-gray-800 text-white" : "bg-blue-50 text-blue-800"}`}
           >
             <p style={formStyle}>{formSteps[currentStep].instructions}</p>
+            <p className={`mt-2 text-sm ${highContrast ? "text-gray-400" : "text-gray-600"}`} style={formStyle}>
+              Press{" "}
+              <kbd
+                className={`px-1 py-0.5 text-xs rounded ${highContrast ? "bg-gray-800 text-yellow-400 border border-yellow-400" : "bg-gray-100 text-gray-800 border border-gray-300"}`}
+              >
+                ?
+              </kbd>{" "}
+              for keyboard shortcuts
+            </p>
 
             <div className="flex justify-between mt-4">
               <Button
@@ -983,6 +1218,14 @@ export default function AccessibleSurveyForm() {
                 className={highContrast ? "border-yellow-400 text-yellow-400" : ""}
               >
                 <ChevronLeft className="mr-1 h-4 w-4" /> Previous
+              </Button>
+
+              <Button
+                variant="outline"
+                onClick={() => setKeyboardShortcutsModalOpen(true)}
+                className={`mx-2 ${highContrast ? "border-yellow-400 text-yellow-400" : ""}`}
+              >
+                <Keyboard className="mr-1 h-4 w-4" /> Shortcuts
               </Button>
 
               <Button
